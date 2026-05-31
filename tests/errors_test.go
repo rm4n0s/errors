@@ -17,8 +17,5 @@ func TestNew(t *testing.T) {
 	fmt.Printf("%#v\n\n", err.StackFrames(false))
 	fmt.Printf("%s\n\n", err.StackTrace())
 
-	nerr := errors.NewWithMetadata("dbproblem", "didn't connect to db", "system", "sql", "failed", 3)
-	fmt.Printf("%#v\n\n", nerr)
-	fmt.Printf("%#v\n\n", nerr.StackFrames(true))
 	t.Error()
 }

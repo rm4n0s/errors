@@ -1,9 +1,19 @@
 package errors
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/gob"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
+)
+
+var (
+	Is     = errors.Is
+	As     = errors.As
+	Unwrap = errors.Unwrap
 )
 
 type StackFrame struct {
@@ -18,39 +28,57 @@ type Error struct {
 	Message     string
 	Metadata    map[string]any
 	OriginalErr error
-	pcs         []uintptr
+	pcs         []uintptr // max 32 frames
 }
 
-func New(tag, message string) *Error {
-	pcs := make([]uintptr, 32) // max 32 frames
+type ErrorJson struct {
+	Tag         string
+	Message     string
+	OriginalErr string
+	Metadata    string
+}
+
+func New(tag, message string, metadata ...any) *Error {
+	pcs := make([]uintptr, 32)
 	n := runtime.Callers(2, pcs)
-	return &Error{Tag: tag, Message: message, pcs: pcs[:n]}
+	md := argsToMap(metadata...)
+	return &Error{Tag: tag, Message: message, pcs: pcs[:n], Metadata: md}
 }
 
-func Newf(tag string, format string, a ...any) *Error {
-	err := fmt.Errorf(format, a...)
-	pcs := make([]uintptr, 32) // max 32 frames
+func NewFromErr(tag, message string, err error, metadata ...any) *Error {
+	pcs := make([]uintptr, 32)
 	n := runtime.Callers(2, pcs)
-	return &Error{Tag: tag, Message: err.Error(), OriginalErr: err, pcs: pcs[:n]}
+	md := argsToMap(metadata...)
+
+	return &Error{Tag: tag, Message: err.Error(), OriginalErr: err, Metadata: md, pcs: pcs[:n]}
 }
 
-func NewWithMetadata(tag, message string, metadata ...any) *Error {
-	pcs := make([]uintptr, 32) // max 32 frames
+func NewFromJson(errj ErrorJson) (*Error, error) {
+	pcs := make([]uintptr, 32)
 	n := runtime.Callers(2, pcs)
-	err := &Error{Tag: tag, Message: message, pcs: pcs[:n]}
-	err.Metadata = argsToMap(metadata...)
-	return err
+	e := &Error{Tag: errj.Tag, Message: errj.Message, pcs: pcs[:n]}
+	if len(errj.Metadata) > 0 {
+		gobBytes, err := base64.StdEncoding.DecodeString(errj.Metadata)
+		if err != nil {
+			return nil, NewFromErr("FailedBase64DecodeMetadata", "failed to decode error's metadata from Base64", err)
+		}
+
+		if err := gob.NewDecoder(bytes.NewReader(gobBytes)).Decode(&e.Metadata); err != nil {
+			return nil, NewFromErr("FailedGobDecodeMetadata", "failed to decode error's metadata from GOB", err)
+		}
+	}
+	if len(errj.OriginalErr) > 0 {
+		e.OriginalErr = errors.New(errj.OriginalErr)
+	}
+	return e, nil
 }
 
-func NewFromErr(tag string, err error) *Error {
-	pcs := make([]uintptr, 32) // max 32 frames
-	n := runtime.Callers(2, pcs)
-	return &Error{Tag: tag, Message: err.Error(), OriginalErr: err, pcs: pcs[:n]}
-}
-
-// Error returns the underlying error's message.
 func (err *Error) Error() string {
 	return err.Message
+}
+
+func (err *Error) Unwrap() error {
+	return err.OriginalErr
 }
 
 func (e *Error) StackFrames(all bool) []StackFrame {
@@ -86,4 +114,33 @@ func (e *Error) StackTrace() string {
 		}
 	}
 	return sb.String()
+}
+
+func (e *Error) ToJson() (*ErrorJson, error) {
+	errj := ErrorJson{
+		Tag:     e.Tag,
+		Message: e.Message,
+	}
+	if e.OriginalErr != nil {
+		errj.OriginalErr = e.OriginalErr.Error()
+	}
+
+	if len(e.Metadata) > 0 {
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(e.Metadata); err != nil {
+			return nil, NewFromErr("FailedGobEncodeMetadata", "failed to encode error's metadata to GOB", err)
+		}
+
+		errj.Metadata = base64.StdEncoding.EncodeToString(buf.Bytes())
+	}
+
+	return &errj, nil
+}
+
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	if !ok {
+		return false
+	}
+	return e.Tag == t.Tag
 }
