@@ -55,7 +55,7 @@ func TestCreateUser_RejectsDuplicateEmail(t *testing.T) {
     }
 
     // Not just "an error happened" — it happened in Save, called from CreateUser.
-    if !appErr.HasRoute("Service.CreateUser->Repository.Save.UserAlreadyExists") {
+    if !appErr.HasRoute("UserService.CreateUser->UserRepository.Save.UserAlreadyExists") {
         t.Errorf("unexpected failure path: %s", appErr.Route())
     }
 }
