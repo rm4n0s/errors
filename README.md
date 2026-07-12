@@ -2,10 +2,10 @@
 
 ## Why
 
-This package provides stack-trace-aware errors, similar to other error-handling libraries — but with one key difference: the Route() and HasRoute() methods let you write unit tests that verify not just that an error occurred, but that it occurred along a specific execution path.
-Combined with test-driven development, this allows you to design a monolithic application by defining, for each function, the errors it should raise — effectively driving your software's architecture through its error paths.
-You can read more about the problem this package addresses in [Error Handling Challenge](https://rm4n0s.github.io/posts/3-error-handling-challenge/), and about the underlying theory of architecting software around its errors in [Can't Driven Development](https://rm4n0s.github.io/posts/6-cant-driven-development/).
-The package also includes a ToJson() method that serializes an error to JSON. This lets you take an error captured in your logs and replay it in an integration test, making it straightforward to reproduce and fix the underlying bug.
+This package provides stack-trace-aware errors, similar to other error-handling libraries — but with one key difference: the Route() and HasRoute() methods let you write unit tests that verify not just that an error occurred, but that it occurred along a specific execution path. <br/>
+Combined with test-driven development, this allows you to design a monolithic application by defining, for each function, the errors it should raise — effectively driving your software's architecture through its error paths. <br/>
+You can read more about the problem this package addresses in [Error Handling Challenge](https://rm4n0s.github.io/posts/3-error-handling-challenge/), and about the underlying theory of architecting software around its errors in [Can't Driven Development](https://rm4n0s.github.io/posts/6-cant-driven-development/). <br/>
+The package also includes a ToJson() method that serializes an error to JSON. This lets you take an error captured in your logs and replay it in an integration test, making it straightforward to reproduce and fix the underlying bug. <br/>
 
 ## Usage
 
