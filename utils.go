@@ -45,7 +45,7 @@ func frameFromRuntime(f runtime.Frame) StackFrame {
 func getCallerFrame() StackFrame {
 	pcs := make([]uintptr, 1)
 	// skip: 0=Callers, 1=getCallerFrame, 2=caller of getCallerFrame
-	runtime.Callers(3, pcs)
+	runtime.Callers(4, pcs)
 
 	frames := runtime.CallersFrames(pcs)
 	f, _ := frames.Next()
