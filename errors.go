@@ -1,7 +1,6 @@
 package errors
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -34,7 +33,7 @@ type ErrorJson struct {
 	Tag         string
 	Message     string
 	OriginalErr string
-	Metadata    string
+	Metadata    map[string]any
 	StackFrames []StackFrame
 }
 
@@ -54,12 +53,8 @@ func FromError(err error) (*Error, bool) {
 }
 
 func FromJson(errj ErrorJson) (*Error, error) {
-	e := &Error{Tag: errj.Tag, Message: errj.Message, resolved: errj.StackFrames}
-	if len(errj.Metadata) > 0 {
-		if err := json.Unmarshal([]byte(errj.Metadata), &e.Metadata); err != nil {
-			return nil, New("FailedJsonDecodeMetadata", fmt.Sprintf("failed to decode error's metadata from JSON: %s", err))
-		}
-	}
+	e := &Error{Tag: errj.Tag, Message: errj.Message,
+		resolved: errj.StackFrames, Metadata: errj.Metadata}
 	if len(errj.OriginalErr) > 0 {
 		e.OriginalErr = errors.New(errj.OriginalErr)
 	}
@@ -134,16 +129,7 @@ func (e *Error) ToJson() (*ErrorJson, error) {
 	}
 
 	errj.StackFrames = e.StackFrames(false)
-
-	if len(e.Metadata) > 0 {
-		metaBytes, err := json.Marshal(e.Metadata)
-		if err != nil {
-			return nil, New("FailedJsonEncodeMetadata", fmt.Sprintf("failed to encode error's metadata to JSON: %s", err))
-		}
-
-		errj.Metadata = string(metaBytes)
-	}
-
+	errj.Metadata = e.Metadata
 	return &errj, nil
 
 }

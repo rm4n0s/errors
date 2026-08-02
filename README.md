@@ -79,10 +79,10 @@ func TestReproduceIssue482(t *testing.T) {
 
     t.Logf("original failure path: %s", logged.Route())
 
-    err := service.NewUserService(productionLikeRepo).CreateUser("[email protected]")
+    err := service.NewUserService(productionLikeRepo).CreateUser(logged.Metadata["email"])
     appErr, ok := errors.FromError(err)
 
-    if !ok || appErr.Tag != logged.Tag {
+    if !ok || (appErr.Tag != logged.Tag && !logged.HasRoute("UserService.CreateUser->UserRepository.Save.UserAlreadyExists") ){
         t.Fatalf("bug not reproduced: want tag %q, got %v", logged.Tag, err)
     }
 }

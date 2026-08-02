@@ -304,32 +304,17 @@ func TestError_StackTrace_ContainsCallerAndLocation(t *testing.T) {
 // FromJson
 // ---------------------------------------------------------------------
 
-func TestFromJson_InvalidJsonMetadata(t *testing.T) {
-	_, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", Metadata: "not valid json at all"})
-	if err == nil {
+func TestFromJson_JsonMetadata(t *testing.T) {
+	errFromJson, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", Metadata: map[string]any{"id": "some id", "number": 13}})
+	if err != nil {
 		t.Fatal("FromJson() error = nil, want an error for invalid JSON")
 	}
-	decErr, ok := errors.FromError(err)
-	if !ok {
-		t.Fatalf("expected *Error, got %T", err)
-	}
-	if decErr.Tag != "FailedJsonDecodeMetadata" {
-		t.Errorf("Tag = %q, want %q", decErr.Tag, "FailedJsonDecodeMetadata")
-	}
-}
 
-func TestFromJson_WrongShapedJsonMetadata(t *testing.T) {
-	// Valid JSON, but an array can't unmarshal into map[string]any.
-	_, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", Metadata: `["a","b"]`})
-	if err == nil {
-		t.Fatal("FromJson() error = nil, want an error for a JSON array where an object was expected")
+	if errFromJson.Metadata["id"] != "some id" {
+		t.Fatal("expected metadata")
 	}
-	decErr, ok := errors.FromError(err)
-	if !ok {
-		t.Fatalf("expected *Error, got %T", err)
-	}
-	if decErr.Tag != "FailedJsonDecodeMetadata" {
-		t.Errorf("Tag = %q, want %q", decErr.Tag, "FailedJsonDecodeMetadata")
+	if errFromJson.Metadata["number"] != 13 {
+		t.Fatal("expected metadata")
 	}
 }
 
