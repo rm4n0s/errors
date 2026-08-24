@@ -427,7 +427,7 @@ func TestNewErrf_Format(t *testing.T) {
 	}
 
 	if !errors.Is(ferr.OriginalErr, origErr) {
-		t.Error("standard Is() = false, want true")
+		t.Error("errors Is() = false, want true")
 	}
 
 	val, ok := ferr.Metadata["value"]
@@ -436,5 +436,33 @@ func TestNewErrf_Format(t *testing.T) {
 	}
 	if val != 23 {
 		t.Error("Metadata['value'] = false, want true")
+	}
+}
+
+func TestNewErr_SetMessage(t *testing.T) {
+	origErr := stdErrors.New("some original error")
+	err := errors.NewErr("example_tag", origErr)
+
+	ferr, ok := errors.FromError(err)
+	if !ok {
+		t.Error("FromError() = false, want true")
+	}
+
+	if ferr.Message != "some original error" {
+		t.Error("Message = false, want true")
+	}
+
+	if !stdErrors.Is(ferr.OriginalErr, origErr) {
+		t.Error("standard Is() = false, want true")
+	}
+
+	if !errors.Is(ferr.OriginalErr, origErr) {
+		t.Error("errors Is() = false, want true")
+	}
+
+	ferr = ferr.SetMessage("different message")
+
+	if ferr.Message != "different message" {
+		t.Error("Message = false, want true")
 	}
 }

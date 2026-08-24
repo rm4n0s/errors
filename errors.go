@@ -44,17 +44,17 @@ func New(tag, message string, metadata ...any) *Error {
 	return &Error{Tag: tag, Message: message, pcs: pcs[:n], Metadata: md}
 }
 
+func NewErr(tag string, err error) *Error {
+	pcs := make([]uintptr, 32)
+	n := runtime.Callers(2, pcs)
+	return &Error{Tag: tag, Message: err.Error(), pcs: pcs[:n], OriginalErr: err}
+}
+
 func NewErrf(tag, format string, a ...any) *Error {
 	pcs := make([]uintptr, 32)
 	n := runtime.Callers(2, pcs)
-	var originalErr error
-	for _, v := range a {
-		err, ok := v.(error)
-		if ok {
-			originalErr = err
-		}
-	}
-	return &Error{Tag: tag, Message: fmt.Errorf(format, a...).Error(), pcs: pcs[:n], OriginalErr: originalErr}
+	originalErr := fmt.Errorf(format, a...)
+	return &Error{Tag: tag, Message: originalErr.Error(), pcs: pcs[:n], OriginalErr: originalErr}
 }
 
 func FromError(err error) (*Error, bool) {
@@ -84,6 +84,11 @@ func (err *Error) Unwrap() error {
 
 func (err *Error) SetMetadata(metadata ...any) *Error {
 	err.Metadata = argsToMap(metadata...)
+	return err
+}
+
+func (err *Error) SetMessage(msg string) *Error {
+	err.Message = msg
 	return err
 }
 
