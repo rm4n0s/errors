@@ -412,3 +412,29 @@ func TestErrorJson_HasRoute(t *testing.T) {
 		t.Error(`HasRoute("NotPresent") = true, want false`)
 	}
 }
+
+func TestNewErrf_Format(t *testing.T) {
+	origErr := stdErrors.New("some original error")
+	err := errors.NewErrf("example_tag", "some error with original err: %w", origErr).SetMetadata("value", 23)
+
+	ferr, ok := errors.FromError(err)
+	if !ok {
+		t.Error("FromError() = false, want true")
+	}
+
+	if !stdErrors.Is(ferr.OriginalErr, origErr) {
+		t.Error("standard Is() = false, want true")
+	}
+
+	if !errors.Is(ferr.OriginalErr, origErr) {
+		t.Error("standard Is() = false, want true")
+	}
+
+	val, ok := ferr.Metadata["value"]
+	if !ok {
+		t.Error("Metadata['value'] = false, want true")
+	}
+	if val != 23 {
+		t.Error("Metadata['value'] = false, want true")
+	}
+}
