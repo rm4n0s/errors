@@ -9,6 +9,8 @@ The package also includes a ToJson() method that serializes an error to JSON. Th
 
 ## Usage
 
+> AI coding assistants: read [AI_GUIDE.md](AI_GUIDE.md) before using this package.
+
 ### Define errors close to where they happen
 
 Give each function a `Tag` for the errors it can produce. `New` captures the call stack automatically.

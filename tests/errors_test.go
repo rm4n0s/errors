@@ -466,3 +466,55 @@ func TestNewErr_SetMessage(t *testing.T) {
 		t.Error("Message = false, want true")
 	}
 }
+
+// ---------------------------------------------------------------------
+// SetMetadata() / RemoveMetadata()
+// ---------------------------------------------------------------------
+
+func TestSetMetadata_MergesWithExisting(t *testing.T) {
+	e := errors.New("Tag", "msg", "a", 1, "b", 2).SetMetadata("b", 20, "c", 3)
+
+	want := map[string]any{"a": 1, "b": 20, "c": 3}
+	if len(e.Metadata) != len(want) {
+		t.Fatalf("Metadata = %v, want %v", e.Metadata, want)
+	}
+	for k, v := range want {
+		if e.Metadata[k] != v {
+			t.Errorf("Metadata[%s] = %v, want %v", k, e.Metadata[k], v)
+		}
+	}
+}
+
+func TestSetMetadata_ChainedCallsKeepAllKeys(t *testing.T) {
+	e := errors.New("Tag", "msg").SetMetadata("w", 2).SetMetadata("h", 1)
+
+	if e.Metadata["w"] != 2 || e.Metadata["h"] != 1 {
+		t.Errorf("Metadata = %v, want map[h:1 w:2]", e.Metadata)
+	}
+}
+
+func TestSetMetadata_NilMetadata(t *testing.T) {
+	e := &errors.Error{Tag: "T", Message: "m"}
+	e.SetMetadata("k", "v")
+
+	if e.Metadata["k"] != "v" {
+		t.Errorf("Metadata = %v, want map[k:v]", e.Metadata)
+	}
+}
+
+func TestRemoveMetadata_RemovesExistingAndIgnoresMissing(t *testing.T) {
+	e := errors.New("Tag", "msg", "a", 1, "b", 2, "c", 3).RemoveMetadata("a", "c", "missing")
+
+	if len(e.Metadata) != 1 || e.Metadata["b"] != 2 {
+		t.Errorf("Metadata = %v, want map[b:2]", e.Metadata)
+	}
+}
+
+func TestRemoveMetadata_NilMetadata(t *testing.T) {
+	e := &errors.Error{Tag: "T", Message: "m"}
+	e.RemoveMetadata("a")
+
+	if len(e.Metadata) != 0 {
+		t.Errorf("Metadata = %v, want empty", e.Metadata)
+	}
+}

@@ -3,6 +3,7 @@ package errors
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"runtime"
 	"slices"
 	"strings"
@@ -83,7 +84,17 @@ func (err *Error) Unwrap() error {
 }
 
 func (err *Error) SetMetadata(metadata ...any) *Error {
-	err.Metadata = argsToMap(metadata...)
+	if err.Metadata == nil {
+		err.Metadata = make(map[string]any)
+	}
+	maps.Copy(err.Metadata, argsToMap(metadata...))
+	return err
+}
+
+func (err *Error) RemoveMetadata(keys ...string) *Error {
+	for _, k := range keys {
+		delete(err.Metadata, k)
+	}
 	return err
 }
 
