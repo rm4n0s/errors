@@ -114,20 +114,14 @@ func TestFromError_WrappedErrorNotUnwrapped(t *testing.T) {
 // ---------------------------------------------------------------------
 
 func TestFromJson_CopiesTagAndMessage(t *testing.T) {
-	e, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
-	if err != nil {
-		t.Fatalf("FromJson() error = %v", err)
-	}
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
 	if e.Tag != "T" || e.Message != "M" {
 		t.Errorf("got Tag=%q Message=%q, want Tag=%q Message=%q", e.Tag, e.Message, "T", "M")
 	}
 }
 
 func TestFromJson_SetsOriginalErr(t *testing.T) {
-	e, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", OriginalErr: "boom"})
-	if err != nil {
-		t.Fatalf("FromJson() error = %v", err)
-	}
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", OriginalErr: "boom"})
 	if e.OriginalErr == nil {
 		t.Fatal("OriginalErr = nil, want an error")
 	}
@@ -137,32 +131,41 @@ func TestFromJson_SetsOriginalErr(t *testing.T) {
 }
 
 func TestFromJson_NoOriginalErr(t *testing.T) {
-	e, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
-	if err != nil {
-		t.Fatalf("FromJson() error = %v", err)
-	}
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
 	if e.OriginalErr != nil {
 		t.Errorf("OriginalErr = %v, want nil", e.OriginalErr)
 	}
 }
 
 func TestFromJson_EmptyMetadataIsSkipped(t *testing.T) {
-	e, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
-	if err != nil {
-		t.Fatalf("FromJson() error = %v", err)
-	}
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
 	if len(e.Metadata) != 0 {
 		t.Errorf("Metadata = %v, want empty", e.Metadata)
 	}
 }
 
-func TestFromJson_CapturesCallStack(t *testing.T) {
-	e, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
-	if err != nil {
-		t.Fatalf("FromJson() error = %v", err)
+func TestFromJson_KeepsStackFrames(t *testing.T) {
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", StackFrames: []errors.StackFrame{
+		{FuncName: "Save", StructName: "Repo", PackageName: "repository"},
+		{FuncName: "Create", StructName: "Svc", PackageName: "service"},
+	}})
+
+	if got, want := e.StackTrace(), "repository.Repo.Save\nservice.Svc.Create\n"; got != want {
+		t.Errorf("StackTrace() = %q, want %q", got, want)
 	}
-	if e.StackTrace() == "" {
-		t.Error("StackTrace() = empty, want captured frames")
+	if got, want := e.Route(), "Svc.Create->Repo.Save.T"; got != want {
+		t.Errorf("Route() = %q, want %q", got, want)
+	}
+}
+
+func TestFromJson_NoStackFrames(t *testing.T) {
+	e := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M"})
+
+	if got := e.StackTrace(); got != "" {
+		t.Errorf("StackTrace() = %q, want empty", got)
+	}
+	if got := e.Route(); got != "" {
+		t.Errorf("Route() = %q, want empty", got)
 	}
 }
 
@@ -305,10 +308,7 @@ func TestError_StackTrace_ContainsCallerAndLocation(t *testing.T) {
 // ---------------------------------------------------------------------
 
 func TestFromJson_JsonMetadata(t *testing.T) {
-	errFromJson, err := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", Metadata: map[string]any{"id": "some id", "number": 13}})
-	if err != nil {
-		t.Fatal("FromJson() error = nil, want an error for invalid JSON")
-	}
+	errFromJson := errors.FromJson(errors.ErrorJson{Tag: "T", Message: "M", Metadata: map[string]any{"id": "some id", "number": 13}})
 
 	if errFromJson.Metadata["id"] != "some id" {
 		t.Fatal("expected metadata")

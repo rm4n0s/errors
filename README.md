@@ -5,7 +5,7 @@
 This package provides stack-trace-aware errors, similar to other error-handling libraries — but with one key difference: the Route() and HasRoute() methods let you write unit tests that verify not just that an error occurred, but that it occurred along a specific execution path. <br/>
 Combined with test-driven development, this allows you to design a monolithic application by defining, for each function, the errors it should raise — effectively driving your software's architecture through its error paths. <br/>
 You can read more about the problem this package addresses in [Error Handling Challenge](https://rm4n0s.github.io/posts/3-error-handling-challenge/), and about the underlying theory of architecting software around its errors in [Can't Driven Development](https://rm4n0s.github.io/posts/6-cant-driven-development/). <br/>
-The package also includes a ToJson() method that serializes an error to JSON. This lets you take an error captured in your logs and replay it in an integration test, making it straightforward to reproduce and fix the underlying bug. <br/>
+Errors log themselves through log/slog, and a ToJson() method serializes an error to JSON. This lets you take an error captured in your logs and replay it in an integration test, making it straightforward to reproduce and fix the underlying bug. <br/>
 
 ## Usage
 
@@ -67,25 +67,39 @@ conditional logic — as is common in ERP-style systems — it becomes crucial.
 
 ### Reproduce a production bug from your logs
 
+`*errors.Error` implements `slog.LogValuer`, so logging it with `log/slog` writes the tag, message, route, metadata and stack frames.
+The keys match the fields of `ErrorJson`, so the logged object can be unmarshaled straight back into it.
+
 ```go
-appErr, _ := errors.FromError(err)
-jsonErr, _ := appErr.ToJson()
-b, _ := json.Marshal(jsonErr)
-log.Println("error in json", string(b)) // ships as structured JSON to your log aggregator
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+logger.Error("create user failed", "err", err)
+// {"time":"...","level":"ERROR","msg":"create user failed","err":{"Tag":"UserAlreadyExists","Message":"...",
+//  "Route":"UserService.CreateUser->UserRepository.Save.UserAlreadyExists","Metadata":{"email":"..."},"StackFrames":[...]}}
 ```
 
 ```go
 func TestReproduceIssue482(t *testing.T) {
-    var logged errors.ErrorJson
-    json.Unmarshal([]byte(rawLogEntry), &logged) // pasted from the log
-
+    var entry struct {
+        Err errors.ErrorJson `json:"err"`
+    }
+    if err := json.Unmarshal([]byte(rawLogEntry), &entry); err != nil { // pasted from the log
+        t.Fatal(err)
+    }
+    logged := entry.Err
     t.Logf("original failure path: %s", logged.Route())
 
-    err := service.NewUserService(productionLikeRepo).CreateUser(logged.Metadata["email"])
-    appErr, ok := errors.FromError(err)
+    email, _ := logged.Metadata["email"].(string)
+    err := service.NewUserService(productionLikeRepo).CreateUser(email)
 
-    if !ok || (appErr.Tag != logged.Tag && !logged.HasRoute("UserService.CreateUser->UserRepository.Save.UserAlreadyExists") ){
-        t.Fatalf("bug not reproduced: want tag %q, got %v", logged.Tag, err)
+    appErr, ok := errors.FromError(err)
+    if !ok || appErr.Tag != logged.Tag || !appErr.HasRoute(logged.Route()) {
+        t.Fatalf("bug not reproduced: want %s, got %v", logged.Route(), err)
     }
 }
 ```
+
+Without slog, use `appErr.ToJson()` and marshal the result yourself, and `errors.FromJson(logged)` to turn it back into an `*errors.Error`.
+
+### Print the stack trace
+
+`fmt.Printf("%+v", err)` prints the message followed by the stack trace. `%v` and `%s` print only the message.

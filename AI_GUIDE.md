@@ -10,7 +10,8 @@ there because models have broken it before.
 - `New`, `NewErr` and `NewErrf` record the **call stack at the line where they are called**.
 - `Route()` turns that stack into a path string such as `UserService.CreateUser->UserRepository.Save.UserAlreadyExists`.
 - Tests assert **which path** produced the error with `HasRoute(...)`, not only that an error happened.
-- `ToJson()` / `FromJson()` let a logged error be replayed in a test, and the route survives the round trip.
+- Logging it with `log/slog` writes the tag, route, metadata and stack frames. The logged object unmarshals into
+  `ErrorJson`, so the failure can be replayed in a test, and the route survives the round trip.
 
 So: **create the error once, where the failure happens, and return it unchanged all the way up.**
 
@@ -26,7 +27,7 @@ errors.NewErrf(tag, format string, a ...any) *Error        // like fmt.Errorf (s
 
 // Conversion
 errors.FromError(err error) (*Error, bool)                 // plain type assertion; does NOT unwrap
-errors.FromJson(errj ErrorJson) (*Error, error)            // rebuild from a logged ErrorJson; error is always nil
+errors.FromJson(errj ErrorJson) *Error                     // rebuild from a logged ErrorJson
 
 // Re-exports of the standard library, so you never need to import both packages
 errors.Is, errors.As, errors.Unwrap
@@ -35,11 +36,13 @@ errors.Is, errors.As, errors.Unwrap
 (*Error).SetMetadata(kv ...any) *Error       // MERGES into existing metadata; later keys overwrite earlier ones
 (*Error).RemoveMetadata(keys ...string) *Error // deletes those keys if present; missing keys are ignored
 (*Error).SetMessage(msg string) *Error       // replaces Message
-(*Error).Route() string                      // "A->B.C->D.Tag"
-(*Error).HasRoute(sub string) bool           // substring match against the route
-(*Error).ToJson() (*ErrorJson, error)        // error is always nil
-(*Error).StackFrames(all bool) []StackFrame
-(*Error).StackTrace() string                 // human-readable trace with file:line
+(*Error).Route() string                      // "A->B.C->D.Tag", trimmed at the caller (see section 4)
+(*Error).HasRoute(sub string) bool           // substring match against Route()
+(*Error).ToJson() *ErrorJson                 // same trimming as Route(); Metadata is a copy
+(*Error).StackFrames(all bool) []StackFrame  // innermost first; all=false trims like Route()
+(*Error).StackTrace() string                 // full human-readable trace with file:line
+(*Error).LogValue() slog.Value               // slog.LogValuer: keys Tag, Message, Route, OriginalErr, Metadata, StackFrames
+(*Error).Format(fmt.State, rune)             // %v %s = Message; %+v = Message + "\n" + StackTrace()
 (*Error).Is(target error) bool               // true when target is *Error with the same Tag
 (*Error).Error() string                      // returns Message
 (*Error).Unwrap() error                      // returns OriginalErr
@@ -174,6 +177,10 @@ if errors.Is(err, ErrUserNotFound) { ... }
 
 Never branch on `err.Error()` or `Message`. Messages are for humans and may change.
 
+Create sentinels with a struct literal as shown above, **never** with `errors.New` at package level. `New`
+captures the stack where it runs, so a package-level `var ErrX = errors.New(...)` has the route
+`goexit->main->doInit->doInit1->init.Tag`, and every function that returns it reports that same wrong path.
+
 ### R6. Import only this package.
 
 It re-exports `Is`, `As` and `Unwrap`. If you really need something it does not export (for example
@@ -206,27 +213,41 @@ Route format, exactly:
 - A method frame is `StructName.FuncName` (pointer `*` removed). A function frame is `FuncName`.
 - **Package names never appear.**
 - The last frame ends with `.` + Tag.
-- `Route()` stops at the function that called `Route()`, so in a test it starts just below the test function.
+- `Route()`, `HasRoute()`, `ToJson()` and `StackFrames(false)` stop at the function that called them, so in a
+  test the route starts just below the test function. If that function is the one that created the error, the
+  route is just that one frame: `CreatingFunc.Tag`.
+- An error without a captured stack (a sentinel made with a struct literal, or `FromJson` with no
+  `StackFrames`) has the route `""`.
 - `HasRoute(s)` is a substring check. Pass the path from the entry function you call down to `.Tag`.
   Include the Tag so that the assertion also checks which error happened.
 - When an assertion fails, print `appErr.Route()` to see the actual path.
 
 ## 5. Logging and replaying
 
+Log with `log/slog` and pass the error as an attribute. Do not call `ToJson` or `json.Marshal` yourself:
+
 ```go
-if e, ok := errors.FromError(err); ok {
-    j, _ := e.ToJson()
-    b, _ := json.Marshal(j)
-    log.Println(string(b))
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+if err := svc.CreateUser(email); err != nil {
+    logger.Error("create user failed", "err", err)
+    return err
 }
 ```
 
+`*Error` implements `slog.LogValuer`, so `"err"` becomes an object with the keys `Tag`, `Message`, `Route`,
+`OriginalErr`, `Metadata` and `StackFrames`. The route is trimmed at the function that called the logger.
+These keys match `ErrorJson`, so the logged object is replayed like this:
+
 ```go
 func TestReproduceIssue482(t *testing.T) {
-    var logged errors.ErrorJson
-    if err := json.Unmarshal([]byte(rawLogEntry), &logged); err != nil {
+    var entry struct {
+        Err errors.ErrorJson `json:"err"`
+    }
+    if err := json.Unmarshal([]byte(rawLogEntry), &entry); err != nil {
         t.Fatal(err)
     }
+    logged := entry.Err
     email, _ := logged.Metadata["email"].(string) // Metadata values are `any`, so assert the type
 
     err := service.NewUserService(productionLikeRepo).CreateUser(email)
@@ -241,6 +262,8 @@ func TestReproduceIssue482(t *testing.T) {
 After `json.Unmarshal`, numeric metadata values are `float64`, not `int`. Keep metadata values
 JSON-serializable: strings, numbers, bools, or simple structs.
 
+For a quick look while debugging, `fmt.Printf("%+v\n", err)` prints the message and the full stack trace.
+
 ## 6. Checklist before you finish
 
 - [ ] Every `errors.New` call has a tag **and** a message.
@@ -249,4 +272,6 @@ JSON-serializable: strings, numbers, bools, or simple structs.
 - [ ] Errors from outside your project (standard library, drivers, third-party packages) are tagged once, with `NewErr`, where they first appear.
 - [ ] Constructors are called inside the failing function, not inside a helper.
 - [ ] Tags are constants. Code branches on Tag or `errors.Is`, never on the message.
+- [ ] Sentinels are struct literals (`&errors.Error{Tag: ...}`), never package-level `errors.New`.
+- [ ] Errors are logged with `slog` as `"err", err`, without manual `ToJson`/`json.Marshal`.
 - [ ] Each tagged failure has a test that asserts its path with `HasRoute("...->...Tag")`.

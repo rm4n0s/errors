@@ -3,6 +3,8 @@ package errors
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"maps"
 	"runtime"
 	"slices"
@@ -66,13 +68,13 @@ func FromError(err error) (*Error, bool) {
 	return res, true
 }
 
-func FromJson(errj ErrorJson) (*Error, error) {
+func FromJson(errj ErrorJson) *Error {
 	e := &Error{Tag: errj.Tag, Message: errj.Message,
 		resolved: errj.StackFrames, Metadata: errj.Metadata}
 	if len(errj.OriginalErr) > 0 {
 		e.OriginalErr = errors.New(errj.OriginalErr)
 	}
-	return e, nil
+	return e
 }
 
 func (err *Error) Error() string {
@@ -104,22 +106,29 @@ func (err *Error) SetMessage(msg string) *Error {
 }
 
 func (e *Error) StackFrames(all bool) []StackFrame {
+	return e.stackFrames(getCallerFrame(), all)
+}
+
+// stackFrames returns the frames from where the error was created up to, but
+// not including, the caller frame. The creation frame is always kept.
+func (e *Error) stackFrames(caller StackFrame, all bool) []StackFrame {
 	if e.resolved != nil {
 		return slices.Clone(e.resolved)
 	}
 
-	callerFrame := getCallerFrame()
-	sfs := make([]StackFrame, 0)
+	sfs := make([]StackFrame, 0, len(e.pcs))
+	if len(e.pcs) == 0 {
+		return sfs
+	}
 	frames := runtime.CallersFrames(e.pcs)
 	for {
 		f, more := frames.Next()
 		sf := frameFromRuntime(f)
-		if !all {
-			if sf.FuncName == callerFrame.FuncName &&
-				sf.StructName == callerFrame.StructName &&
-				sf.PackageName == callerFrame.PackageName {
-				break
+		if !all && sf == caller {
+			if len(sfs) == 0 {
+				sfs = append(sfs, sf)
 			}
+			break
 		}
 		sfs = append(sfs, sf)
 		if !more {
@@ -133,13 +142,12 @@ func (e *Error) StackTrace() string {
 	var sb strings.Builder
 	if e.resolved != nil {
 		for _, f := range e.resolved {
-			fn := f.FuncName
-			if f.StructName != "" {
-				fn = fmt.Sprintf("%s.%s", f.StructName, f.FuncName)
-			}
-			fmt.Fprintf(&sb, "%s.%s\n", f.PackageName, fn)
+			fmt.Fprintf(&sb, "%s.%s\n", f.PackageName, f.qualifiedName())
 		}
 		return sb.String()
+	}
+	if len(e.pcs) == 0 {
+		return ""
 	}
 	frames := runtime.CallersFrames(e.pcs)
 	for {
@@ -153,7 +161,11 @@ func (e *Error) StackTrace() string {
 
 }
 
-func (e *Error) ToJson() (*ErrorJson, error) {
+func (e *Error) ToJson() *ErrorJson {
+	return e.toJson(getCallerFrame())
+}
+
+func (e *Error) toJson(caller StackFrame) *ErrorJson {
 	errj := ErrorJson{
 		Tag:     e.Tag,
 		Message: e.Message,
@@ -162,10 +174,49 @@ func (e *Error) ToJson() (*ErrorJson, error) {
 		errj.OriginalErr = e.OriginalErr.Error()
 	}
 
-	errj.StackFrames = e.StackFrames(false)
-	errj.Metadata = e.Metadata
-	return &errj, nil
+	errj.StackFrames = e.stackFrames(caller, false)
+	errj.Metadata = maps.Clone(e.Metadata)
+	return &errj
+}
 
+// LogValue implements slog.LogValuer. The keys match the ErrorJson fields, so a
+// logged error can be unmarshaled into ErrorJson and replayed with FromJson.
+func (e *Error) LogValue() slog.Value {
+	errj := e.toJson(getCallerFrameOutsideSlog())
+	attrs := []slog.Attr{
+		slog.String("Tag", errj.Tag),
+		slog.String("Message", errj.Message),
+		slog.String("Route", errj.Route()),
+	}
+	if errj.OriginalErr != "" {
+		attrs = append(attrs, slog.String("OriginalErr", errj.OriginalErr))
+	}
+	if len(errj.Metadata) > 0 {
+		attrs = append(attrs, slog.Any("Metadata", errj.Metadata))
+	}
+	attrs = append(attrs, slog.Any("StackFrames", errj.StackFrames))
+	return slog.GroupValue(attrs...)
+}
+
+// Format implements fmt.Formatter. %+v prints the message followed by the stack trace.
+func (e *Error) Format(s fmt.State, verb rune) {
+	switch verb {
+	case 'v':
+		if s.Flag('+') {
+			fmt.Fprintf(s, "%s\n%s", e.Message, e.StackTrace())
+			return
+		}
+		if s.Flag('#') {
+			type plain Error
+			fmt.Fprintf(s, "%#v", (*plain)(e))
+			return
+		}
+		io.WriteString(s, e.Message)
+	case 's':
+		io.WriteString(s, e.Message)
+	case 'q':
+		fmt.Fprintf(s, "%q", e.Message)
+	}
 }
 
 func (e *Error) Is(target error) bool {
@@ -177,58 +228,15 @@ func (e *Error) Is(target error) bool {
 }
 
 func (e *Error) Route() string {
-	route := ""
-	frames := e.StackFrames(false)
-	slices.Reverse(frames)
-	for i, v := range frames {
-		fn := v.FuncName
-		if v.StructName != "" {
-			fn = fmt.Sprintf("%s.%s", v.StructName, v.FuncName)
-		}
-		if len(frames)-1 == i {
-			fn += "." + e.Tag
-		}
-		if i == 0 {
-			route = fn
-		} else {
-			route += fn
-		}
-
-		if len(frames)-1 > i {
-			route += "->"
-		}
-	}
-	return route
-
+	return buildRoute(e.stackFrames(getCallerFrame(), false), e.Tag)
 }
 
 func (e *Error) HasRoute(route string) bool {
-	return strings.Contains(e.Route(), route)
+	return strings.Contains(buildRoute(e.stackFrames(getCallerFrame(), false), e.Tag), route)
 }
 
 func (e *ErrorJson) Route() string {
-	route := ""
-	frames := slices.Clone(e.StackFrames)
-	slices.Reverse(frames)
-	for i, v := range frames {
-		fn := v.FuncName
-		if v.StructName != "" {
-			fn = fmt.Sprintf("%s.%s", v.StructName, v.FuncName)
-		}
-		if len(frames)-1 == i {
-			fn += "." + e.Tag
-		}
-		if i == 0 {
-			route = fn
-		} else {
-			route += fn
-		}
-
-		if len(frames)-1 > i {
-			route += "->"
-		}
-	}
-	return route
+	return buildRoute(e.StackFrames, e.Tag)
 }
 
 func (e *ErrorJson) HasRoute(route string) bool {

@@ -42,15 +42,51 @@ func frameFromRuntime(f runtime.Frame) StackFrame {
 	}
 }
 
+// getCallerFrame must be called directly from an exported method of Error.
 func getCallerFrame() StackFrame {
 	pcs := make([]uintptr, 1)
-	// skip: 0=Callers, 1=getCallerFrame, 2=caller of getCallerFrame
-	runtime.Callers(4, pcs)
+	// skip: 0=Callers, 1=getCallerFrame, 2=exported method, 3=caller of exported method
+	runtime.Callers(3, pcs)
 
 	frames := runtime.CallersFrames(pcs)
 	f, _ := frames.Next()
 
 	return frameFromRuntime(f)
+}
+
+// getCallerFrameOutsideSlog must be called directly from Error.LogValue. It
+// returns the first frame above LogValue that is not part of log/slog.
+func getCallerFrameOutsideSlog() StackFrame {
+	pcs := make([]uintptr, 32)
+	// skip: 0=Callers, 1=getCallerFrameOutsideSlog, 2=LogValue
+	n := runtime.Callers(3, pcs)
+
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		f, more := frames.Next()
+		if !strings.HasPrefix(f.Function, "log/slog.") || !more {
+			return frameFromRuntime(f)
+		}
+	}
+}
+
+func (f StackFrame) qualifiedName() string {
+	if f.StructName != "" {
+		return f.StructName + "." + f.FuncName
+	}
+	return f.FuncName
+}
+
+// buildRoute expects frames ordered from where the error was created outwards.
+func buildRoute(frames []StackFrame, tag string) string {
+	if len(frames) == 0 {
+		return ""
+	}
+	names := make([]string, len(frames))
+	for i, f := range frames {
+		names[len(frames)-1-i] = f.qualifiedName()
+	}
+	return strings.Join(names, "->") + "." + tag
 }
 
 func argsToMap(args ...any) map[string]any {
